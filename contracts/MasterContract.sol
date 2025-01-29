@@ -41,8 +41,7 @@ contract MasterContract is Ownable, ReentrancyGuard
         uint256 _cdrPerBlock,
         uint256 _startBlock,
         uint256 _multiplier
-    ) Ownable(_msgSender())
-    {
+    ) Ownable(_msgSender()){
         cdr = _cdr;
         devAddr = _devAddr;
         cdrPerBlock = _cdrPerBlock;
@@ -63,8 +62,7 @@ contract MasterContract is Ownable, ReentrancyGuard
     }
 
 
-    function poolLength() external view returns (uint256)
-    {
+    function poolLength() external view returns (uint256){
         return poolInfo.length;
     }
 
@@ -84,5 +82,60 @@ contract MasterContract is Ownable, ReentrancyGuard
         );
     }
 
+    function getMultiplier(uint256 _from, uint256 _to) public view returns(uint256){
+        return (_to - _from) * BONUS_MULTIPLIER;
+    }
+
+
+    function updateMultiplier(uint256 _multiplier) public onlyOwner{
+        BONUS_MULTIPLIER = _multiplier;
+    }
+
+    function checkDuplicatePool(IERC20 _lpToken) public view {
+        uint256 lengthOfPool = poolInfo.length;
+        for(uint256 _pid = 0; _pid < lengthOfPool; _pid++){
+            require(poolInfo[_pid].lpToken != _lpToken, "Pool already exist");
+        }
+    }
+
+
+    function updateStakingPool() internal {
+        uint256 lengthOfPool = poolInfo.length;
+        uint256 points = 0;
+        uint256 poolZero = poolInfo[0].allocPoint;
+
+        for(uint256 _pid = 1; _pid < lengthOfPool; _pid++){
+            points += poolInfo[_pid].allocPoint;
+        }
+
+        if(points != 0){
+            points = (points / 3);
+            totalAllocation = (totalAllocation - poolZero) + points;
+            poolInfo[0].allocPoint = points;
+        }
+    }
+
+
+    function addPool(uint256 _allocPoint, IERC20 _lpToken) public onlyOwner {
+        checkDuplicatePool(_lpToken);
+
+        uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
+        totalAllocation += _allocPoint;
+
+        poolInfo.push(
+            PoolInfo({
+                lpToken: _lpToken,
+                allocPoint: _allocPoint,
+                lastRewardBlock: lastRewardBlock,
+                rewardTokenPerShare: 0
+            })
+        );
+
+        updateStakingPool();
+
+    }
+
+
+
       
-}
+}   
