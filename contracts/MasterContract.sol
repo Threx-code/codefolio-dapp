@@ -61,4 +61,28 @@ contract MasterContract is Ownable, ReentrancyGuard
 
         totalAllocation = 10000;
     }
+
+
+    function poolLength() external view returns (uint256)
+    {
+        return poolInfo.length;
+    }
+
+    function getPoolInfo(uint256 _pid) public view returns (
+        address lpToken,
+        uint256 allocPoint,
+        uint256 lastRewardBlock,
+        uint256 rewardTokenPerShare
+
+    ){
+        PoolInfo storage pool = poolInfo[_pid];
+        return (
+            address(pool.lpToken),
+            pool.allocPoint,
+            pool.lastRewardBlock,
+            pool.rewardTokenPerShare
+        );
+    }
+
+      
 }
