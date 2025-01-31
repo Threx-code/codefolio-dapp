@@ -121,6 +121,10 @@ contract MasterContract is Ownable, ReentrancyGuard
         return (_to - _from) * BONUS_MULTIPLIER;
     }
 
+    function calcTokenReward(uint256 _multiplier, uint256 _poolAllocPoint) internal view returns(uint256){
+        return (_multiplier * cdrPerBlock * _poolAllocPoint) / totalAllocation;
+    }
+
 
     /**
      * @notice Updates the reward bonus multiplier.
@@ -207,32 +211,86 @@ contract MasterContract is Ownable, ReentrancyGuard
 
 
    
-
+    /**
+     * @notice Updates the given pool's reward variables.
+     * @dev This function recalculates and distributes reward tokens to the pool.
+     *      - It ensures rewards are only updated when necessary.
+     *      - If no LP tokens are staked, it updates the last reward block and exits.
+     *      - Rewards are minted for both the developer and the staking pool.
+     *      - The function also updates the `rewardTokenPerShare` for future reward calculations.
+     * 
+     * @param _pid The ID of the pool to update.
+     */
     function updatePool(uint256 _pid) public validatePool(_pid) onlyOwner{
         PoolInfo storage pool = poolInfo[_pid];
         if(block.number < pool.lastRewardBlock){
-            return;
+            return; // Exit if the current block is before the last reward block
         }
 
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
         if(lpSupply == 0){
             pool.lastRewardBlock = block.number;
-            return;
+            return; // Exit if no LP tokens are staked
         }
 
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
-        uint256 tokenReward = (multiplier * cdrPerBlock * pool.allocPoint) / totalAllocation;
+        uint256 tokenReward = calcTokenReward(multiplier, pool.allocPoint);
 
-        cdr.mint(devAddr, tokenReward / 10);
-        cdr.mint(address(this), tokenReward);
+        cdr.mint(devAddr, tokenReward / 10); // Mint 10% of rewards to the developer
+        cdr.mint(address(cdr), tokenReward); /// Mint full reward tokens to the CDR contract
 
 
-        // use factor of twelve Szabo/Microether/Micro
+         // Update the accumulated reward per LP token, using 1e12 as a precision factor
         pool.rewardTokenPerShare = pool.rewardTokenPerShare + (tokenReward * 1e12) / lpSupply;
 
+        // Update last reward block to the current block
         pool.lastRewardBlock = block.number;
+    }
+
+
+    function massPoolUpdate() public {
+        uint256 lengthOfPool = poolInfo.length;
+        for(uint256 _pid; _pid < lengthOfPool; _pid++){
+            updatePool(_pid);
+        }
+    }
+
+
+    function set(uint256 _pid, uint256 _allocPoint, bool _withUpdate) public onlyOwner validatePool(_pid){
+        if(_withUpdate){
+            massPoolUpdate();
+        }
+
+        uint256 previousAllocPoint = poolInfo[_pid].allocPoint;
+        poolInfo[_pid].allocPoint = _allocPoint;
+        
+        if(previousAllocPoint != _allocPoint){
+            totalAllocation = totalAllocation - previousAllocPoint + _allocPoint;
+            updateStakingPool();
+        }
+    }
+
+
+    function pendingReward(uint256 _pid, address _user) public view validatePool(_pid) returns (uint256){
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][_user];
+        uint256 rewardTokenPershare = pool.rewardTokenPerShare;
+        uint256 lpSupply = pool.lpToken.balanceOf(address(this));
+
+        if(block.number > pool.lastRewardBlock && lpSupply != 0){
+            uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
+            uint256 tokenReward = calcTokenReward(multiplier, pool.allocPoint);
+            rewardTokenPershare = rewardTokenPershare + (tokenReward * 1e12) / lpSupply;
+        }
+
+        return (user.amount * rewardTokenPershare) / 1e12 - user.pendingReward;
+    }
 
     
+
+
+    function safeCdrTransfer(address _to, uint256 _amount) internal {
+        cdr.safeCdrTransfer(_to, _amount);
     }
 
 

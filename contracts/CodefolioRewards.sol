@@ -27,7 +27,6 @@ contract  CodefolioRewards is ERC20, ERC20Burnable, Ownable, AccessControl
     function mint(address _to, uint256 _amount) external
     {
         require(hasRole(MANAGER_ROLE, _msgSender()), "Caller does not have right");
-    
         _mint(_to, _amount);
     }
 
