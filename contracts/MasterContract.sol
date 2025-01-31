@@ -38,6 +38,11 @@ contract MasterContract is Ownable, ReentrancyGuard
 
 
     event PoolAdded(address indexed lpToken, uint256 allocPoint, uint256 lastRewardBlock);
+    event PoolUpdated(address indexed lpToken, uint256 allocPoint, uint256 lastRewardBlock);
+    
+    event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
+    event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
+    event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
 
     constructor(
         CodefolioRewards _cdr,
@@ -245,6 +250,8 @@ contract MasterContract is Ownable, ReentrancyGuard
 
         // Update last reward block to the current block
         pool.lastRewardBlock = block.number;
+
+        emit PoolUpdated(address(pool.lpToken), pool.allocPoint, pool.lastRewardBlock);
     }
 
 
@@ -286,7 +293,28 @@ contract MasterContract is Ownable, ReentrancyGuard
         return (user.amount * rewardTokenPershare) / 1e12 - user.pendingReward;
     }
 
-    
+
+    function stake(uint256 _pid, uint256 _amount) public validatePool(_pid) nonReentrant{
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][_msgSender()];
+
+        updatePool(_pid);
+
+        if(user.amount > 0){
+            uint256 pending = (user.amount * pool.rewardTokenPerShare) / 1e12 - user.pendingReward;
+            
+            if(pending > 0){
+                safeCdrTransfer(_msgSender(), pending);
+            }
+        }
+
+        if(_amount > 0){
+            pool.lpToken.safeTransferFrom(_msgSender(), address(this), _amount);
+            user.amount += _amount;
+        }
+
+        user.pendingReward = (user.amount * pool.rewardTokenPerShare) / 1e12;
+    }
 
 
     function safeCdrTransfer(address _to, uint256 _amount) internal {
