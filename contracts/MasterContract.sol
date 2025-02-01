@@ -309,11 +309,38 @@ contract MasterContract is Ownable, ReentrancyGuard
         }
 
         if(_amount > 0){
-            pool.lpToken.safeTransferFrom(_msgSender(), address(this), _amount);
+            // pool.lpToken.safeTransferFrom(address(_msgSender()), address(this), _amount);
+            pool.lpToken.transferFrom(address(_msgSender()), address(this), _amount);
             user.amount += _amount;
         }
 
         user.pendingReward = (user.amount * pool.rewardTokenPerShare) / 1e12;
+
+        emit Deposit(_msgSender(), _pid, _amount);
+    }
+
+
+    function unstake(uint256 _pid, uint256 _amount) public validatePool(_pid) nonReentrant {
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][_msgSender()];
+
+        updatePool(_pid);
+
+        if(user.amount > 0){
+            uint256 pending = (user.amount * pool.rewardTokenPerShare) / 1e12 - user.pendingReward;
+            if(pending > 0){
+                safeCdrTransfer(_msgSender(), pending);
+            }
+        }
+
+        if(_amount > 0){
+            user.amount = user.amount - _amount;
+            // pool.lpToken.safeTransfer(address(_msgSender()), _amount);
+            pool.lpToken.transfer(address(_msgSender()), _amount);
+        }
+
+        user.pendingReward = (user.amount * pool.rewardTokenPerShare) / 1e12;
+        emit Withdraw(_msgSender(), _pid, _amount);
     }
 
 
