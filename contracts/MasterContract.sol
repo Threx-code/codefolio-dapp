@@ -387,6 +387,14 @@ contract MasterContract is Ownable, ReentrancyGuard
     }
 
 
+    function changeDev(address _dev) public{
+        require(_dev != address(0), "Invalid address");
+        require(_dev != devAddr, "Same address");
+        require(_msgSender() == devAddr, "Unauthorized");
+        devAddr = _dev;
+    }
+
+
     function safeCdrTransfer(address _to, uint256 _amount) internal {
         cdr.safeCdrTransfer(_to, _amount);
     }
