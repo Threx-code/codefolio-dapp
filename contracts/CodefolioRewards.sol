@@ -24,21 +24,22 @@ contract  CodefolioRewards is ERC20, ERC20Burnable, Ownable, AccessControl
         
     }
 
-    function mint(address _to, uint256 _amount) external
-    {
-        require(hasRole(MANAGER_ROLE, _msgSender()), "Caller does not have right");
+    modifier onlyManager() {
+        require(hasRole(MANAGER_ROLE, _msgSender()), "Caller is not a manager");
+        _;
+    }
+
+    function mint(address _to, uint256 _amount) external onlyManager {
         _mint(_to, _amount);
     }
 
-    function safeCdrTransfer(address _to, uint256 _amount) external
-    {
-        require(hasRole(MANAGER_ROLE, _msgSender()), "Caller does not have right");
+    function safeCdrTransfer(address _to, uint256 _amount) external onlyManager {
         uint256 cdrBal = balanceOf(address(this));
-        if(_amount > cdrBal){
-            transfer(_to, cdrBal);
-        }else{
-            transfer(_to, _amount);
-        }
+        _transfer(address(this), _to, _amount > cdrBal ? cdrBal : _amount);
+    }
+
+    function burn(uint256 _amount) public override onlyOwner {
+        super.burn(_amount);
     }
 
 }

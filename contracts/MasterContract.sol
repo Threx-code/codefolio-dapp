@@ -28,14 +28,12 @@ contract MasterContract is Ownable, ReentrancyGuard
     CodefolioRewards cdr;
     address public devAddr;
     uint256 public cdrPerBlock;
-
-    mapping(uint256 => mapping(address => UserInfo)) public userInfo;
-
-     PoolInfo[] public poolInfo;
+    PoolInfo[] public poolInfo;
     uint256 public totalAllocation = 0;
     uint256 public startBlock;
     uint256 public BONUS_MULTIPLIER;
 
+    mapping(uint256 => mapping(address => UserInfo)) public userInfo;
 
     event PoolAdded(address indexed lpToken, uint256 allocPoint, uint256 lastRewardBlock);
     event PoolUpdated(address indexed lpToken, uint256 allocPoint, uint256 lastRewardBlock);
@@ -123,10 +121,14 @@ contract MasterContract is Ownable, ReentrancyGuard
      * @return uint256 The calculated multiplier for the specified pool range.
      */
     function getMultiplier(uint256 _from, uint256 _to) public view returns(uint256){
+        if(_to <= _from) return 0; // prevent negative multipliers
+
         return (_to - _from) * BONUS_MULTIPLIER;
     }
 
     function calcTokenReward(uint256 _multiplier, uint256 _poolAllocPoint) internal view returns(uint256){
+        if(totalAllocation == 0) return 0; // Prevent division by zero
+
         return (_multiplier * cdrPerBlock * _poolAllocPoint) / totalAllocation;
     }
 
@@ -166,6 +168,7 @@ contract MasterContract is Ownable, ReentrancyGuard
      */
     function updateStakingPool() internal {
         uint256 lengthOfPool = poolInfo.length;
+        if(lengthOfPool == 0) return; // Prevent out-of-bounds error
         uint256 points = 0;
         uint256 poolZero = poolInfo[0].allocPoint;
 
@@ -174,7 +177,7 @@ contract MasterContract is Ownable, ReentrancyGuard
         }
 
         if(points != 0){
-            points = (points / 3);
+            points /= 3;
             totalAllocation = (totalAllocation - poolZero) + points;
             poolInfo[0].allocPoint = points;
         }
@@ -195,6 +198,9 @@ contract MasterContract is Ownable, ReentrancyGuard
      * @custom:emit Emits an event to log the addition of a new pool (if events are included in the contract).
      */
     function addPool(uint256 _allocPoint, IERC20 _lpToken) public onlyOwner {
+        require(address(_lpToken) != address(0), "Invalid LP token address");
+        require(_allocPoint > 0, "Allocation point must be greater than 0");
+        
         checkDuplicatePool(_lpToken);
 
         uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
@@ -233,13 +239,15 @@ contract MasterContract is Ownable, ReentrancyGuard
         }
 
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
-        if(lpSupply == 0){
+        if(lpSupply == 0 || totalAllocation == 0){
             pool.lastRewardBlock = block.number;
             return; // Exit if no LP tokens are staked
         }
 
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
         uint256 tokenReward = calcTokenReward(multiplier, pool.allocPoint);
+
+        require(address(cdr) != address(0), "Invalid CDR token address");
 
         cdr.mint(devAddr, tokenReward / 10); // Mint 10% of rewards to the developer
         cdr.mint(address(cdr), tokenReward); /// Mint full reward tokens to the CDR contract
@@ -257,7 +265,7 @@ contract MasterContract is Ownable, ReentrancyGuard
 
     function massPoolUpdate() public {
         uint256 lengthOfPool = poolInfo.length;
-        for(uint256 _pid; _pid < lengthOfPool; _pid++){
+        for(uint256 _pid = 0; _pid < lengthOfPool; _pid++){
             updatePool(_pid);
         }
     }
@@ -269,9 +277,10 @@ contract MasterContract is Ownable, ReentrancyGuard
         }
 
         uint256 previousAllocPoint = poolInfo[_pid].allocPoint;
-        poolInfo[_pid].allocPoint = _allocPoint;
         
         if(previousAllocPoint != _allocPoint){
+            poolInfo[_pid].allocPoint = _allocPoint;
+
             totalAllocation = totalAllocation - previousAllocPoint + _allocPoint;
             updateStakingPool();
         }
@@ -284,10 +293,12 @@ contract MasterContract is Ownable, ReentrancyGuard
         uint256 rewardTokenPershare = pool.rewardTokenPerShare;
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
 
-        if(block.number > pool.lastRewardBlock && lpSupply != 0){
+        if(block.number > pool.lastRewardBlock && lpSupply > 0){
             uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
             uint256 tokenReward = calcTokenReward(multiplier, pool.allocPoint);
-            rewardTokenPershare = rewardTokenPershare + (tokenReward * 1e12) / lpSupply;
+            
+            // calculate the updated reward Token per share
+            rewardTokenPershare += (tokenReward * 1e12) / lpSupply;
         }
 
         return (user.amount * rewardTokenPershare) / 1e12 - user.pendingReward;
@@ -309,8 +320,7 @@ contract MasterContract is Ownable, ReentrancyGuard
         }
 
         if(_amount > 0){
-            // pool.lpToken.safeTransferFrom(address(_msgSender()), address(this), _amount);
-            pool.lpToken.transferFrom(address(_msgSender()), address(this), _amount);
+            pool.lpToken.transferFrom(_msgSender(), address(this), _amount);
             user.amount += _amount;
         }
 
@@ -324,6 +334,9 @@ contract MasterContract is Ownable, ReentrancyGuard
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_msgSender()];
 
+        require(_amount > 0, "Amount must be greater than 0");
+        require(user.amount >= _amount, "Insufficient balance"); // To prevent 
+
         updatePool(_pid);
 
         if(user.amount > 0){
@@ -335,12 +348,42 @@ contract MasterContract is Ownable, ReentrancyGuard
 
         if(_amount > 0){
             user.amount = user.amount - _amount;
-            // pool.lpToken.safeTransfer(address(_msgSender()), _amount);
             pool.lpToken.transfer(address(_msgSender()), _amount);
         }
 
         user.pendingReward = (user.amount * pool.rewardTokenPerShare) / 1e12;
         emit Withdraw(_msgSender(), _pid, _amount);
+    }
+
+
+    function autoCompound() public nonReentrant{
+        PoolInfo storage pool = poolInfo[0];
+        UserInfo storage user = userInfo[0][_msgSender()];
+
+        if(user.amount > 0){
+            uint256 pending = (user.amount * pool.rewardTokenPerShare) / 1e12 - user.pendingReward;
+            if(pending > 0){
+                user.amount += pending;
+            }
+        }
+
+        user.pendingReward = (user.amount * pool.rewardTokenPerShare) / 1e12;
+    }
+
+
+    function emergencyWidraw(uint256 _pid) public validatePool(_pid) nonReentrant{
+        PoolInfo storage pool = poolInfo[_pid];
+        UserInfo storage user = userInfo[_pid][_msgSender()];
+
+        uint256 amount = user.amount;
+        require(amount > 0, "Insufficient balance"); // Ensure non zero withdrawl
+
+        user.amount = 0;
+        user.pendingReward = 0;
+
+        pool.lpToken.transfer(address(_msgSender()), amount);
+
+        emit EmergencyWithdraw(_msgSender(), _pid, amount);
     }
 
 
